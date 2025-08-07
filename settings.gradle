@@ -1,0 +1,30 @@
+pluginManagement {
+    repositories {
+        maven {
+            name = "artifactory"
+            url = "https://jfrog.mleitz1.com/artifactory/gradle-plugins-local/"
+            credentials {
+                username = providers.gradleProperty("ARTIFACTORY_USERNAME").orElse(providers.environmentVariable("ARTIFACTORY_USERNAME")).orNull
+                password = providers.gradleProperty("ARTIFACTORY_PASSWORD").orElse(providers.environmentVariable("ARTIFACTORY_PASSWORD")).orNull
+            }
+        }
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+dependencyResolutionManagement {
+    repositories {
+        maven {
+            name = "artifactory"
+            url = "https://jfrog.mleitz1.com/artifactory/gradle-plugins-local/"
+            credentials {
+                username = providers.gradleProperty("ARTIFACTORY_USERNAME").orElse(providers.environmentVariable("ARTIFACTORY_USERNAME")).orNull
+                password = providers.gradleProperty("ARTIFACTORY_PASSWORD").orElse(providers.environmentVariable("ARTIFACTORY_PASSWORD")).orNull
+            }
+        }
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'quarkus-build-helper-plugin'
