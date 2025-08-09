@@ -9,7 +9,7 @@ This plugin provides diagnostic tools and validation for Quarkus native builds, 
 - Diagnose issues with native image builds
 - Validate native executables after they're built
 
-The plugin is non-invasive and doesn't modify your existing Quarkus configuration - it only provides information and validation.
+By default, the plugin is non-invasive and does not modify your existing Quarkus configuration. However, you can opt-in to have it enforce the build type (jar or native) via a Gradle property (see Build type configuration below).
 
 
 ## Features
@@ -17,7 +17,7 @@ The plugin is non-invasive and doesn't modify your existing Quarkus configuratio
 - **Environment Validation**: Automatically checks if your environment is properly set up for native image building
 - **Build Configuration Diagnostics**: Provides tasks to display your current Quarkus build configuration
 - **Native Executable Validation**: Verifies native executables after they're built
-- **Non-invasive**: The plugin is read-only and won't modify your existing Quarkus configuration
+- **Optional Build-Type Enforcement**: Opt-in property to ensure your build runs as jar or native
 - **Detailed Error Messages**: Provides detailed error messages with instructions when native build requirements aren't met
 - **Toolchain Integration**: Works with Gradle's toolchain API to find the correct Java installation
 
@@ -27,9 +27,42 @@ The plugin is non-invasive and doesn't modify your existing Quarkus configuratio
 
 ```gradle
 plugins {
-    id 'com.mleitz1.quarkus.quarkus-build-helper' version '0.1.0'
+    id 'com.mleitz1.quarkus.quarkus-build-helper' version '0.1.3'
 }
 ```
+
+### Build type configuration (opt-in)
+
+You can instruct this plugin to enforce the Quarkus build type via a Gradle property. Set one of the following on the command line:
+
+- Native image build:
+  -Pquarkus-build-helper-plugin.configure.buildType=native
+
+- JAR build (uber-jar):
+  -Pquarkus-build-helper-plugin.configure.buildType=jar
+
+Effects when set:
+- buildType=native: the plugin will ensure quarkusBuild attempts to create a native image (quarkus.native.enabled=true, quarkus.package.jar.enabled=false).
+- buildType=jar: the plugin will ensure a JAR build runs as an uber-jar (quarkus.package.jar.enabled=true, quarkus.package.jar.type=uber-jar, quarkus.native.enabled=false).
+
+Examples:
+```bash
+# Force a native image build
+./gradlew quarkusBuild -Pquarkus-build-helper-plugin.configure.buildType=native
+
+# Force a JAR (uber-jar) build
+./gradlew quarkusBuild -Pquarkus-build-helper-plugin.configure.buildType=jar
+```
+
+If the property is omitted, the plugin will not modify your Quarkus build configuration.
+
+#### Why offer setting this property?
+
+This is the only way I could specify a build type via the ./gradlew command. I want to build a jar for dev but always a native image for prod.
+
+The above examples, seem to be impossible to achieve via the build command without this. You can't inject or modify these in gradle.build because it's already too late.
+
+The plugin approach works because plugins are applied early in the build cycle before it hits the error condition.
 
 ### Basic configuration
 
