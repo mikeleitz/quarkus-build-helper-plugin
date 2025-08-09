@@ -54,6 +54,11 @@ public class QuarkusBuildHelperPlugin implements Plugin<Project> {
 
     NativeImageUtil nativeImageUtil = new NativeImageUtil();
 
+    BuildConfigurer buildConfigurer = new BuildConfigurer();
+
+    boolean isPluginGoingToConfigureNative = false;
+    boolean isPluginGoingToConfigureJar = false;
+
     /**
      * Default constructor for the plugin.
      */
@@ -74,6 +79,9 @@ public class QuarkusBuildHelperPlugin implements Plugin<Project> {
         // Create an instance of the property resolver
         propertyResolver = new Mleitz1QuarkusPropertyResolver(project);
 
+        isPluginGoingToConfigureNative = buildConfigurer.isPluginGoingToConfigureNative(project);
+        isPluginGoingToConfigureJar = buildConfigurer.isPluginGoingToConfigureJar(project);
+
         // Make the property resolver available through project extensions
         project.getExtensions().getExtraProperties().set("mleitz1QuarkusPropertyResolver", propertyResolver);
 
@@ -86,6 +94,11 @@ public class QuarkusBuildHelperPlugin implements Plugin<Project> {
         project.getExtensions().getExtraProperties().set("getDetailedJVMInfo", (java.util.function.Supplier<Map<String, Object>>) this::getDetailedJVMInfo);
         project.getExtensions().getExtraProperties().set("validateNativeEnvironment", (java.util.function.Supplier<Boolean>) this::validateNativeEnvironment);
         project.getExtensions().getExtraProperties().set("isQuarkusPluginApplied", (java.util.function.Supplier<Boolean>) () -> project.getPlugins().hasPlugin(QUARKUS_PLUGIN_ID));
+
+        // See if the user wants this plugin to ensure the build type
+        if (isPluginGoingToConfigureNative || isPluginGoingToConfigureJar) {
+            buildConfigurer.configureBuild(project);
+        }
 
         createNewTasks(project);
         registerTasks(project);
@@ -116,9 +129,9 @@ public class QuarkusBuildHelperPlugin implements Plugin<Project> {
                 System.out.println("\n=========================================================");
                 System.out.println("QUARKUS BUILD - OVERVIEW");
                 System.out.println("=========================================================");
-                System.out.println("⚙️ quarkus.native.enabled: " + propertyResolver.getQuarkusNativeEnabledStatus());
+                System.out.println("⚙️ quarkus.native.enabled: " + (isPluginGoingToConfigureNative ? "QuakrusBuildHelper has enabled native builds" : propertyResolver.getQuarkusNativeEnabledStatus()));
                 System.out.println("⚙️ quarkus.native.container-build: " + propertyResolver.getQuarkusNativeContainerBuildStatus());
-                System.out.println("⚙️ quarkus.package.jar.enabled: " + propertyResolver.getQuarkusPackageJarEnabledStatus());
+                System.out.println("⚙️ quarkus.package.jar.enabled: " + (isPluginGoingToConfigureJar ? "QuakrusBuildHelper has enabled jar builds" : propertyResolver.getQuarkusPackageJarEnabledStatus()));
                 System.out.println("⚙️ quarkus.native.remote-container-build: " + propertyResolver.getQuarkusNativeRemoteContainerBuildStatus());
                 System.out.println("⚙️ Builder Image: " + propertyResolver.getQuarkusNativeBuilderImage());
                 System.out.println("=========================================================\n");
@@ -138,8 +151,8 @@ public class QuarkusBuildHelperPlugin implements Plugin<Project> {
                 System.out.println("⚙️ Java JDK Binary: " + getJavaJdkBinary(project));
                 System.out.println("⚙️ Native Image Binary: " + nativeImageUtil.findNativeImageBinary(project));
                 System.out.println("");
-                System.out.println("⚙️ Native Build Enabled: " + propertyResolver.getQuarkusNativeEnabledStatus());
-                System.out.println("⚙️ JAR Build Enabled: " + propertyResolver.getQuarkusPackageJarEnabledStatus());
+                System.out.println("⚙️ Native Build Enabled: " + (isPluginGoingToConfigureNative ? "QuakrusBuildHelper has enabled native builds" : propertyResolver.getQuarkusNativeEnabledStatus()));
+                System.out.println("⚙️ JAR Build Enabled: " + (isPluginGoingToConfigureJar ? "QuakrusBuildHelper has enabled jar builds" : propertyResolver.getQuarkusPackageJarEnabledStatus()));
                 System.out.println("⚙️ Container Build: " + propertyResolver.getQuarkusNativeContainerBuildStatus());
                 System.out.println("⚙️ Remote Container Build: " + propertyResolver.getQuarkusNativeRemoteContainerBuildStatus());
                 System.out.println("");

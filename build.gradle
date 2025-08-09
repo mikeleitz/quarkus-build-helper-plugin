@@ -53,8 +53,8 @@ publishing {
             name = "artifactory"
             url = "https://jfrog.mleitz1.com/artifactory/gradle-plugins-local/"
             credentials {
-                username = project.findProperty("ARTIFACTORY_USERNAME") ?: System.getenv("ARTIFACTORY_USERNAME")
-                password = project.findProperty("ARTIFACTORY_PASSWORD") ?: System.getenv("ARTIFACTORY_PASSWORD")
+                username = project.findProperty("artifactory_user") ?: System.getenv("ARTIFACTORY_USERNAME")
+                password = project.findProperty("artifactory_password") ?: System.getenv("ARTIFACTORY_PASSWORD")
             }
         }
     }
