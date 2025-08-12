@@ -92,8 +92,10 @@ public class QuarkusBuildHelperPlugin implements Plugin<Project> {
         project.getExtensions().getExtraProperties().set("isNativeImageAvailable", (java.util.function.Supplier<Boolean>) this::isNativeImageAvailable);
         project.getExtensions().getExtraProperties().set("getNativeJVMType", (java.util.function.Supplier<String>) this::getNativeJVMType);
         project.getExtensions().getExtraProperties().set("getDetailedJVMInfo", (java.util.function.Supplier<Map<String, Object>>) this::getDetailedJVMInfo);
-        project.getExtensions().getExtraProperties().set("validateNativeEnvironment", (java.util.function.Supplier<Boolean>) this::validateNativeEnvironment);
         project.getExtensions().getExtraProperties().set("isQuarkusPluginApplied", (java.util.function.Supplier<Boolean>) () -> project.getPlugins().hasPlugin(QUARKUS_PLUGIN_ID));
+        if (isPluginGoingToConfigureJar) {
+            project.getExtensions().getExtraProperties().set("validateNativeEnvironment", (java.util.function.Supplier<Boolean>) this::validateNativeEnvironment);
+        }
 
         // See if the user wants this plugin to ensure the build type
         if (isPluginGoingToConfigureNative || isPluginGoingToConfigureJar) {

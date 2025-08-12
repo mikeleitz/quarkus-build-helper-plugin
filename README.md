@@ -60,7 +60,7 @@ If the property is omitted, the plugin will not modify your Quarkus build config
 
 This is the only way I could specify a build type via the ./gradlew command. I want to build a jar for dev but always a native image for prod.
 
-The above examples, seem to be impossible to achieve via the build command without this. You can't inject or modify these in gradle.build because it's already too late.
+The above examples, seem impossible to achieve via the build command without this. You can't inject or modify these in gradle.build because it's already too late.
 
 The plugin approach works because plugins are applied early in the build cycle before it hits the error condition.
 
