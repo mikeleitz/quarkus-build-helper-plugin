@@ -160,7 +160,6 @@ public class QuarkusBuildHelperPlugin implements Plugin<Project> {
                 System.out.println("");
                 System.out.println("⚙️ Builder Image: " + propertyResolver.getQuarkusNativeBuilderImage());
                 System.out.println("⚙️ Native Image Memory: " + propertyResolver.getQuarkusNativeNativeImageXmx());
-                System.out.println("⚙️ Validate Native Environment: " + (validateNativeEnvironment() ? "✅ Valid" : "❌ Invalid"));
                 System.out.println("⚙️ Native JVM Type: " + getNativeJVMType());
                 System.out.println("⚙️ Native Image Available: " + (isNativeImageAvailable() ? "✅ Valid" : "❌ Invalid"));
                 System.out.println("=========================================================\n");
