@@ -34,7 +34,7 @@ gradlePlugin {
 
     plugins {
         quarkusBuildHelper {
-            id = 'com.mleitz1.quarkus.quarkus-build-helper'
+            id = 'com.mleitz1.quarkus.quarkus-build-helper-plugin'
             implementationClass = 'com.mleitz1.quarkus.gradle.QuarkusBuildHelperPlugin'
             displayName = 'Quarkus Build Helper Plugin'
             description = 'A Gradle plugin for diagnosing and troubleshooting Quarkus builds'
@@ -47,14 +47,19 @@ test {
     useJUnitPlatform()
 }
 
+// Import Artifactory credentials from environment variables
+def artifactoryUsername = project.hasProperty('artifactory_user') ? project.property('artifactory_user') : System.getenv('ARTIFACTORY_USERNAME')
+def artifactoryPassword = project.hasProperty('artifactory_password') ? project.property('artifactory_password') : System.getenv('ARTIFACTORY_PASSWORD')
+
+
 publishing {
     repositories {
         maven {
             name = "artifactory"
             url = "https://jfrog.mleitz1.com/artifactory/gradle-plugins-local/"
             credentials {
-                username = project.findProperty("artifactory_user") ?: System.getenv("ARTIFACTORY_USERNAME")
-                password = project.findProperty("artifactory_password") ?: System.getenv("ARTIFACTORY_PASSWORD")
+                username = artifactoryUsername
+                password = artifactoryPassword
             }
         }
     }

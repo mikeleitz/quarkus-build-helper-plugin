@@ -27,7 +27,7 @@ By default, the plugin is non-invasive and does not modify your existing Quarkus
 
 ```gradle
 plugins {
-    id 'com.mleitz1.quarkus.quarkus-build-helper' version '0.1.3'
+    id 'com.mleitz1.quarkus.quarkus-build-helper-plugin' version '0.1.5'
 }
 ```
 
