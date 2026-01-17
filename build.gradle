@@ -43,23 +43,25 @@ gradlePlugin {
     }
 }
 
+java {
+    withSourcesJar()
+    withJavadocJar()
+}
+
 test {
     useJUnitPlatform()
 }
-
-// Import Artifactory credentials from environment variables
-def artifactoryUsername = project.hasProperty('artifactory_user') ? project.property('artifactory_user') : System.getenv('ARTIFACTORY_USERNAME')
-def artifactoryPassword = project.hasProperty('artifactory_password') ? project.property('artifactory_password') : System.getenv('ARTIFACTORY_PASSWORD')
 
 
 publishing {
     repositories {
         maven {
-            name = "artifactory"
-            url = "https://jfrog.mleitz1.com/artifactory/gradle-plugins-local/"
+            name = "repo.mleitz1.com"
+            url = "https://repo.mleitz1.com/repository/gradle-plugins-private/"
             credentials {
-                username = artifactoryUsername
-                password = artifactoryPassword
+                username = nexusUsername
+                password = nexusPassword
+
             }
         }
     }
