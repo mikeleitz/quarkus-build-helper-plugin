@@ -1,0 +1,33 @@
+steps:
+  build:
+    # Use a Gradle image matching the wrapper (8.14.3) + Java 11 toolchain
+    image: gradle:8.14.3-jdk11
+    commands:
+      - ./gradlew clean build --no-daemon
+
+  publish:
+    image: gradle:8.14.3-jdk11
+    depends_on:
+      - build
+    when:
+      # Publish only on git tags (recommended for versioned releases)
+      event: [tag]
+    environment:
+      ORG_GRADLE_PROJECT_nexusUsername:
+        from_secret: nexus_woodpecker_username
+      ORG_GRADLE_PROJECT_nexusPassword:
+        from_secret: nexus_woodpecker_password
+      SIGNING_KEY_ID:
+        from_secret: SIGNING_KEY_ID
+      SIGNING_PASSWORD:
+        from_secret: SIGNING_PASSWORD
+      SIGNING_SECRET_KEY:
+        from_secret: SIGNING_SECRET_KEY
+    commands:
+      - |
+        # Enable signing only when the SIGNING_KEY_ID secret is provided
+        if [ -n "$SIGNING_KEY_ID" ]; then
+          ARGS="$ARGS -Psigning.keyId=$SIGNING_KEY_ID -Psigning.password=$SIGNING_PASSWORD -Psigning.secretKey=$SIGNING_SECRET_KEY"
+        fi
+
+        ./gradlew publish --no-daemon $ARGS
