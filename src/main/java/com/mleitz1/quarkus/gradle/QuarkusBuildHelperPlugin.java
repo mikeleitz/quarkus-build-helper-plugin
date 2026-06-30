@@ -3,9 +3,6 @@ package com.mleitz1.quarkus.gradle;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashMap;
-import java.util.Map;
-import org.gradle.api.GradleException;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.Task;
@@ -18,23 +15,17 @@ import org.gradle.jvm.toolchain.JavaToolchainService;
 import org.gradle.jvm.toolchain.JavaToolchainSpec;
 
 /**
- * A Gradle plugin that encapsulates Quarkus build support.
- * This plugin simplifies the configuration of Quarkus builds
- * by providing sensible defaults and helper tasks.
- * <p>
- * It includes native environment detection and validation to ensure
- * the build environment meets the requirements for native image building.
- * <p>
- * The plugin provides several diagnostic tasks:
- * <ul>
- *   <li>displayQuarkusBuildOverview - Shows basic Quarkus build configuration</li>
- *   <li>displayQuarkusBuildDetail - Shows detailed Quarkus build configuration</li>
- *   <li>checkNativeEnvironment - Validates the environment for native image building</li>
- *   <li>validateNativeExecutable - Verifies the native executable after build</li>
- * </ul>
- * <p>
- * It also exposes several utility functions as project extensions that can be used
- * in build scripts to check the native build environment.
+ * Quarkus Build Helper Gradle plugin.
+ *
+ * Primary purpose: allow controlling the two key dimensions via -P properties early in the build:
+ *   1. buildType = native | jar
+ *   2. containerBuild = true (container) | false (use the machine's Graal/Mandrel)
+ *
+ * When you request a combination (e.g. native + local), the plugin configures Quarkus
+ * (via System properties) and produces troubleshooting output to explain why it may
+ * or may not be succeeding in your environment.
+ *
+ * The diagnostic tasks are designed to answer: "I asked for X, why didn't I get it?"
  */
 public class QuarkusBuildHelperPlugin implements Plugin<Project> {
     /**
@@ -48,16 +39,23 @@ public class QuarkusBuildHelperPlugin implements Plugin<Project> {
     public static String QUARKUS_PLUGIN_ID = "io.quarkus";
 
     /**
-     * Property resolver for accessing Quarkus-specific properties.
+     * Property reader for accessing Quarkus-specific properties (used for status display).
      */
-    Mleitz1QuarkusPropertyResolver propertyResolver;
+    QuarkusPropertyReader propertyResolver;
 
     NativeImageUtil nativeImageUtil = new NativeImageUtil();
 
     BuildConfigurer buildConfigurer = new BuildConfigurer();
 
-    boolean isPluginGoingToConfigureNative = false;
-    boolean isPluginGoingToConfigureJar = false;
+    /**
+     * The configuration the user explicitly requested via -P properties, if any.
+     * This drives both the forced settings and the troubleshooting output.
+     */
+    BuildConfigurer.RequestedConfig requestedConfig;
+
+    boolean isConfiguring() {
+        return requestedConfig != null;
+    }
 
     /**
      * Default constructor for the plugin.
@@ -77,28 +75,19 @@ public class QuarkusBuildHelperPlugin implements Plugin<Project> {
     @Override
     public void apply(Project project) {
         // Create an instance of the property resolver
-        propertyResolver = new Mleitz1QuarkusPropertyResolver(project);
+        propertyResolver = new QuarkusPropertyReader(project);
 
-        isPluginGoingToConfigureNative = buildConfigurer.isPluginGoingToConfigureNative(project);
-        isPluginGoingToConfigureJar = buildConfigurer.isPluginGoingToConfigureJar(project);
+        // Read what (if anything) the user requested via -P properties.
+        // This is the only reliable early hook for controlling native vs jar and container vs local.
+        requestedConfig = buildConfigurer.getRequestedConfig(project);
 
-        // Make the property resolver available through project extensions
-        project.getExtensions().getExtraProperties().set("mleitz1QuarkusPropertyResolver", propertyResolver);
-
-        // Define various recon functions
-        project.getExtensions().getExtraProperties().set("isGraalVM", (java.util.function.Supplier<Boolean>) this::isGraalVM);
-        project.getExtensions().getExtraProperties().set("isMandrel", (java.util.function.Supplier<Boolean>) this::isMandrel);
-        project.getExtensions().getExtraProperties().set("isNativeCapableJVM", (java.util.function.Supplier<Boolean>) this::isNativeCapableJVM);
-        project.getExtensions().getExtraProperties().set("isNativeImageAvailable", (java.util.function.Supplier<Boolean>) this::isNativeImageAvailable);
-        project.getExtensions().getExtraProperties().set("getNativeJVMType", (java.util.function.Supplier<String>) this::getNativeJVMType);
-        project.getExtensions().getExtraProperties().set("getDetailedJVMInfo", (java.util.function.Supplier<Map<String, Object>>) this::getDetailedJVMInfo);
+        // Minimal exposure. The resolver can be used from build scripts if needed for custom logic.
+        project.getExtensions().getExtraProperties().set("quarkusBuildPropertyResolver", propertyResolver);
         project.getExtensions().getExtraProperties().set("isQuarkusPluginApplied", (java.util.function.Supplier<Boolean>) () -> project.getPlugins().hasPlugin(QUARKUS_PLUGIN_ID));
-        if (isPluginGoingToConfigureJar) {
-            project.getExtensions().getExtraProperties().set("validateNativeEnvironment", (java.util.function.Supplier<Boolean>) this::validateNativeEnvironment);
-        }
 
-        // See if the user wants this plugin to ensure the build type
-        if (isPluginGoingToConfigureNative || isPluginGoingToConfigureJar) {
+        // Apply the requested configuration (sets System properties that Quarkus sees early).
+        // Uses -P because -D system properties were not effective for the user at the right time.
+        if (isConfiguring()) {
             buildConfigurer.configureBuild(project);
         }
 
@@ -122,61 +111,41 @@ public class QuarkusBuildHelperPlugin implements Plugin<Project> {
     private void createNewTasks(Project project) {
         TaskContainer tasks = project.getTasks();
 
-        // Register a task to display Quarkus property status
+        // Register a task to display requested config + quick troubleshooting
         tasks.register("displayQuarkusBuildOverview", task -> {
             task.setGroup(QUARKUS_DIAGNOSTICS_TASK_GROUP);
-            task.setDescription("Displays the status of Quarkus build properties");
+            task.setDescription("Shows what was requested (native/jar + container/local) and basic reality check for troubleshooting");
 
             task.doLast(t -> {
-                System.out.println("\n=========================================================");
-                System.out.println("QUARKUS BUILD - OVERVIEW");
-                System.out.println("=========================================================");
-                System.out.println("⚙️ quarkus.native.enabled: " + (isPluginGoingToConfigureNative ? "QuakrusBuildHelper has enabled native builds" : propertyResolver.getQuarkusNativeEnabledStatus()));
-                System.out.println("⚙️ quarkus.native.container-build: " + propertyResolver.getQuarkusNativeContainerBuildStatus());
-                System.out.println("⚙️ quarkus.package.jar.enabled: " + (isPluginGoingToConfigureJar ? "QuakrusBuildHelper has enabled jar builds" : propertyResolver.getQuarkusPackageJarEnabledStatus()));
-                System.out.println("⚙️ quarkus.native.remote-container-build: " + propertyResolver.getQuarkusNativeRemoteContainerBuildStatus());
-                System.out.println("⚙️ Builder Image: " + propertyResolver.getQuarkusNativeBuilderImage());
-                System.out.println("=========================================================\n");
+                printTroubleshootingOverview(project);
             });
         });
 
-        // Register a task to display the native build configuration
+        // Register a task to display detailed troubleshooting info focused on the two use cases
         tasks.register("displayQuarkusBuildDetail", task -> {
             task.setGroup(QUARKUS_DIAGNOSTICS_TASK_GROUP);
-            task.setDescription("Displays Quarkus build detail - useful for troubleshooting NATIVE builds");
+            task.setDescription("Detailed environment info to troubleshoot why native+local or other requests may be failing");
 
             task.doLast(t -> {
-                System.out.println("\n=========================================================");
-                System.out.println("QUARKUS BUILD - DETAIL");
-                System.out.println("=========================================================");
-                System.out.println("⚙️ Java Home: " + getJavaHome(project));
-                System.out.println("⚙️ Java JDK Binary: " + getJavaJdkBinary(project));
-                System.out.println("⚙️ Native Image Binary: " + nativeImageUtil.findNativeImageBinary(project));
-                System.out.println("");
-                System.out.println("⚙️ Native Build Enabled: " + (isPluginGoingToConfigureNative ? "QuakrusBuildHelper has enabled native builds" : propertyResolver.getQuarkusNativeEnabledStatus()));
-                System.out.println("⚙️ JAR Build Enabled: " + (isPluginGoingToConfigureJar ? "QuakrusBuildHelper has enabled jar builds" : propertyResolver.getQuarkusPackageJarEnabledStatus()));
-                System.out.println("⚙️ Container Build: " + propertyResolver.getQuarkusNativeContainerBuildStatus());
-                System.out.println("⚙️ Remote Container Build: " + propertyResolver.getQuarkusNativeRemoteContainerBuildStatus());
-                System.out.println("");
-                System.out.println("⚙️ Builder Image: " + propertyResolver.getQuarkusNativeBuilderImage());
-                System.out.println("⚙️ Native Image Memory: " + propertyResolver.getQuarkusNativeNativeImageXmx());
-                System.out.println("⚙️ Native JVM Type: " + getNativeJVMType());
-                System.out.println("⚙️ Native Image Available: " + (isNativeImageAvailable() ? "✅ Valid" : "❌ Invalid"));
-                System.out.println("=========================================================\n");
+                printTroubleshootingDetail(project);
             });
         });
 
-        // Register a task to verify native executable after build
+        // Register a task to verify native executable after build (manual or auto-attached only for local native requests)
         tasks.register("validateNativeExecutable", task -> {
             task.setGroup(QUARKUS_DIAGNOSTICS_TASK_GROUP);
-            task.setDescription("Verifies native executable details after the build is done");
-            task.dependsOn("quarkusBuild");
+            task.setDescription("Verifies that the native executable was produced (useful after a successful local native build)");
+
+            // Only pull in quarkusBuild automatically if this makes sense for the request
+            if (requestedConfig != null && requestedConfig.isNative()) {
+                task.dependsOn("quarkusBuild");
+            }
 
             task.doLast(t -> {
                 String nativeExecutablePath = project.getProjectDir().getAbsolutePath() + "/build/" + project.getName() + "-" + project.getVersion() + "-runner";
                 File nativeExecutable = new File(nativeExecutablePath);
                 System.out.println("\n=========================================================");
-                System.out.println("QUARKUS BUILD - THE FINISH");
+                System.out.println("QUARKUS BUILD HELPER - NATIVE EXECUTABLE CHECK");
                 System.out.println("=========================================================");
 
                 if (nativeExecutable.exists()) {
@@ -186,51 +155,38 @@ public class QuarkusBuildHelperPlugin implements Plugin<Project> {
                     System.out.println("   🚀 Run with: chmod +x " + nativeExecutablePath + " && " + nativeExecutablePath);
                 } else {
                     System.out.println("❌ Native executable not found at expected location");
-                    System.out.println("Missing: " + nativeExecutablePath);
+                    System.out.println("   Missing: " + nativeExecutablePath);
+                    System.out.println("   This often means the native build step did not run or failed silently.");
+                    if (requestedConfig != null && requestedConfig.isNative() && Boolean.FALSE.equals(requestedConfig.containerBuild)) {
+                        System.out.println("   You requested local native — double-check the environment output above.");
+                    }
                 }
             });
         });
 
-        // Register a task to check the native build environment
+        // Register a task to check the native build environment - now request-aware
         tasks.register("checkNativeEnvironment", task -> {
             task.setGroup(QUARKUS_DIAGNOSTICS_TASK_GROUP);
-            task.setDescription("Checks the build environment for native image building - useful for troubleshooting NATIVE builds");
+            task.setDescription("Diagnoses the environment specifically for the requested build (native local vs container etc.)");
 
             task.doLast(t -> {
-                String jvmType = getNativeJVMType();
-                Map<String, Object> detailedInfo = getDetailedJVMInfo();
+                printTroubleshootingDetail(project);
 
-                System.out.println("🔍 Native Build Environment Check:");
-                System.out.println(" Current JVM: " + detailedInfo.get("vendor") + " " + detailedInfo.get("javaVersion"));
-                System.out.println(" Runtime Name: " + detailedInfo.get("runtime"));
-                System.out.println(" VM Name: " + detailedInfo.get("vmName"));
-                System.out.println(" VM Version: " + detailedInfo.get("vmVersion"));
-                System.out.println(" Java Home: " + detailedInfo.get("javaHome"));
-                System.out.println(" Mandrel in Path: " + detailedInfo.get("mandrelInPath"));
-                System.out.println(" Quarkus Plugin Applied: " + (project.getPlugins().hasPlugin(QUARKUS_PLUGIN_ID) ? "✅ Applied" : "❌ Not applied"));
-                System.out.println(" GraalVM: " + (isGraalVM() ? "✅ Detected" : "❌ Not detected"));
-                System.out.println(" Mandrel: " + (isMandrel() ? "✅ Detected" : "❌ Not detected"));
-                System.out.println(" Native Capable: " + (isNativeCapableJVM() ? "✅ " + jvmType : "❌ Not detected"));
-                System.out.println(" Native Image: " + (isNativeImageAvailable() ? "✅ Available" : "❌ Not available"));
-
-                // Show release file content for debugging
-                System.out.println("\n📄 Release File Content:");
-                System.out.println(detailedInfo.get("releaseContent"));
-
-                if (!isNativeCapableJVM() || !isNativeImageAvailable()) {
-                    System.out.println("\n💡 To enable native builds:");
-                    System.out.println("   Option 1 - GraalVM:");
-                    System.out.println("     1. Install GraalVM from https://www.graalvm.org/downloads/");
-                    System.out.println("     2. Set JAVA_HOME to point to GraalVM installation");
-                    System.out.println("     3. Install native-image: gu install native-image");
-                    System.out.println("   Option 2 - Mandrel:");
-                    System.out.println("     1. Install Mandrel from https://github.com/graalvm/mandrel/releases");
-                    System.out.println("     2. Set JAVA_HOME to point to Mandrel installation");
-                    System.out.println("     3. native-image is included with Mandrel");
-                    System.out.println("   4. Verify: native-image --version");
-                    System.out.println("\n⚠️  This project requires GraalVM or Mandrel with native-image for building.");
-                } else {
-                    System.out.println("\n🎉 Native build environment is ready with " + jvmType + "!");
+                // If the user explicitly requested local native, give a very direct diagnosis
+                if (requestedConfig != null && requestedConfig.isNative() && Boolean.FALSE.equals(requestedConfig.containerBuild)) {
+                    System.out.println("--- SPECIFIC DIAGNOSIS FOR YOUR REQUEST: native + local ---");
+                    if (!isNativeCapableJVM()) {
+                        System.out.println("❌ No GraalVM or Mandrel detected as the running JVM.");
+                        System.out.println("   The JVM in your Gradle toolchain / JAVA_HOME / PATH is: " + getNativeJVMType());
+                        System.out.println("   This is the most common reason local native builds fail when you ask for container=false.");
+                    } else if (!isNativeImageAvailable()) {
+                        System.out.println("❌ Graal/Mandrel detected but native-image tool not found.");
+                        System.out.println("   Make sure the 'native-image' executable is in the bin dir or on PATH.");
+                    } else {
+                        System.out.println("✅ Local native capability detected. If quarkusBuild is still failing,");
+                        System.out.println("   check memory settings, additionalBuildArgs, or Quarkus version incompatibilities.");
+                    }
+                    System.out.println("---------------------------------------------------------------");
                 }
             });
         });
@@ -256,34 +212,184 @@ public class QuarkusBuildHelperPlugin implements Plugin<Project> {
         project.afterEvaluate(p -> {
             TaskContainer tasks = p.getTasks();
 
-            // Only set up Quarkus task dependencies if the Quarkus plugin is present
-            if (project.getPlugins().hasPlugin(QUARKUS_PLUGIN_ID)) {
-                // Wire up overview task to quarkusGenerateCode if it exists
+            // Only auto-wire diagnostic output when the user is actively using the configure properties.
+            // This keeps the plugin non-surprising when it's only on the classpath for occasional troubleshooting.
+            if (isConfiguring() && project.getPlugins().hasPlugin(QUARKUS_PLUGIN_ID)) {
                 Task quarkusGenerateCode = tasks.findByName("quarkusGenerateCode");
                 Task displayOverview = tasks.findByName("displayQuarkusBuildOverview");
-
                 if (displayOverview != null && quarkusGenerateCode != null) {
                     quarkusGenerateCode.dependsOn(displayOverview);
                 }
 
-                // Wire up detail task to quarkusBuild if it exists
                 Task quarkusBuild = tasks.findByName("quarkusBuild");
                 Task displayDetail = tasks.findByName("displayQuarkusBuildDetail");
-
-
                 if (displayDetail != null && quarkusBuild != null) {
                     quarkusBuild.dependsOn(displayDetail);
                 }
             }
 
-            // Wire up validation to build task (always available)
+            // Only auto-attach the native executable validator when the user explicitly asked for a (local) native build.
+            // Jar builds and container builds don't need this the same way.
             Task buildTask = tasks.findByName("build");
             Task validateNativeExecutable = tasks.findByName("validateNativeExecutable");
-
             if (buildTask != null && validateNativeExecutable != null) {
-                buildTask.finalizedBy(validateNativeExecutable);
+                if (requestedConfig != null && requestedConfig.isNative() && Boolean.FALSE.equals(requestedConfig.containerBuild)) {
+                    buildTask.finalizedBy(validateNativeExecutable);
+                }
             }
         });
+    }
+
+    /**
+     * Prints focused troubleshooting output for the two supported use cases.
+     * Emphasizes "what you asked for" vs "what the environment actually has".
+     */
+    private void printTroubleshootingOverview(Project project) {
+        System.out.println("\n=========================================================");
+        System.out.println("QUARKUS BUILD HELPER - CONFIG + TROUBLESHOOTING");
+        System.out.println("=========================================================");
+
+        if (!isConfiguring()) {
+            System.out.println("No build configuration requested via -P flags.");
+            System.out.println("Use -Pquarkus-build-helper-plugin.configure.buildType=native|jar");
+            System.out.println("and optionally -Pquarkus-build-helper-plugin.configure.containerBuild=true|false");
+            System.out.println("=========================================================\n");
+            return;
+        }
+
+        System.out.println("REQUESTED: " + requestedConfig.describe());
+
+        // Show what we forced
+        if (requestedConfig.isNative()) {
+            System.out.println("  - quarkus.native.enabled = true");
+            System.out.println("  - quarkus.package.jar.enabled = false");
+            if (requestedConfig.hasContainerPreference()) {
+                System.out.println("  - quarkus.native.container-build = " + requestedConfig.containerBuild);
+            }
+        } else if (requestedConfig.isJar()) {
+            System.out.println("  - quarkus.package.jar.enabled = true");
+            System.out.println("  - quarkus.package.jar.type = uber-jar");
+            System.out.println("  - quarkus.native.enabled = false");
+        }
+
+        System.out.println("");
+
+        // Reality check tailored to the request
+        if (requestedConfig.isNative() && Boolean.FALSE.equals(requestedConfig.containerBuild)) {
+            // User wants native on the machine's Graal
+            boolean hasLocalNative = isNativeCapableJVM() && isNativeImageAvailable();
+            String jvmType = getNativeJVMType();
+            String nativeBin = nativeImageUtil.findNativeImageBinary(project);
+
+            System.out.println("LOCAL NATIVE REALITY CHECK (container=false):");
+            System.out.println("  Current JVM type: " + jvmType);
+            System.out.println("  Native-image capable (Graal/Mandrel): " + (isNativeCapableJVM() ? "✅ " + jvmType : "❌ No"));
+            System.out.println("  native-image binary visible: " + (nativeBin != null ? "✅ " + nativeBin : "❌ Not found"));
+            System.out.println("  (Searched: Gradle toolchain, JAVA_HOME/bin, PATH)");
+
+            if (!hasLocalNative) {
+                System.out.println("");
+                System.out.println("❌ PROBLEM: You requested NATIVE using the machine's Graal instance,");
+                System.out.println("   but this JVM does not appear to be a GraalVM or Mandrel with native-image.");
+                System.out.println("   The build will likely fail or fall back incorrectly.");
+                System.out.println("");
+                System.out.println("   What you can do:");
+                System.out.println("   - Switch to container build: add -Pquarkus-build-helper-plugin.configure.containerBuild=true");
+                System.out.println("   - Point Gradle toolchain or JAVA_HOME at a GraalVM/Mandrel install");
+                System.out.println("   - Ensure 'native-image' is on your PATH from a proper Graal install");
+            } else {
+                System.out.println("");
+                System.out.println("✅ Environment looks capable for local native build.");
+            }
+
+        } else if (requestedConfig.isNative() && Boolean.TRUE.equals(requestedConfig.containerBuild)) {
+            System.out.println("CONTAINER NATIVE REQUESTED:");
+            System.out.println("  Quarkus will use a builder image inside a container (Docker/Podman).");
+            System.out.println("  Local Graal/Mandrel on the machine is not required.");
+            System.out.println("  Ensure your container runtime is running and can pull the builder image.");
+
+            // Light hint
+            boolean dockerish = isCommandAvailable("docker") || isCommandAvailable("podman");
+            System.out.println("  Container runtime detected in PATH: " + (dockerish ? "✅ (docker or podman found)" : "❓ (no docker/podman in PATH - may still work if in PATH for daemon)"));
+
+        } else if (requestedConfig.isJar()) {
+            System.out.println("JAR BUILD REQUESTED:");
+            System.out.println("  No special JVM requirements. Standard JDK is sufficient.");
+            System.out.println("  Current JVM: " + getNativeJVMType() + " @ " + System.getProperty("java.home"));
+        }
+
+        System.out.println("=========================================================\n");
+    }
+
+    private void printTroubleshootingDetail(Project project) {
+        System.out.println("\n=========================================================");
+        System.out.println("QUARKUS BUILD HELPER - DETAILED TROUBLESHOOT");
+        System.out.println("=========================================================");
+
+        System.out.println("Toolchain / Java:");
+        System.out.println("  Java Home (toolchain): " + getJavaHome(project));
+        System.out.println("  Java Binary (toolchain): " + getJavaJdkBinary(project));
+        System.out.println("  Effective JAVA_HOME (process): " + System.getProperty("java.home"));
+        System.out.println("  Native Image candidate: " + nativeImageUtil.findNativeImageBinary(project));
+        System.out.println("");
+
+        if (isConfiguring()) {
+            System.out.println("Your request: " + requestedConfig.describe());
+        }
+
+        System.out.println("Quarkus-relevant properties (after any configuration by this plugin):");
+        // When the plugin configured via System.setProperty, the resolver may report "mismatch"
+        // because the original gradle property (if any) differs. We surface the System value as truth here.
+        System.out.println("  quarkus.native.enabled: " + effectivePropStatus("quarkus.native.enabled"));
+        System.out.println("  quarkus.native.container-build: " + effectivePropStatus("quarkus.native.container-build"));
+        System.out.println("  quarkus.package.jar.enabled: " + effectivePropStatus("quarkus.package.jar.enabled"));
+        System.out.println("  quarkus.native.remote-container-build: " + propertyResolver.getQuarkusNativeRemoteContainerBuildStatus());
+        System.out.println("  builder-image: " + propertyResolver.getQuarkusNativeBuilderImage());
+        System.out.println("  native-image-xmx: " + propertyResolver.getQuarkusNativeNativeImageXmx());
+        System.out.println("");
+
+        if (requestedConfig != null && requestedConfig.isNative() && Boolean.FALSE.equals(requestedConfig.containerBuild)) {
+            System.out.println("LOCAL NATIVE CAPABILITY:");
+            System.out.println("  GraalVM detected: " + (isGraalVM() ? "✅" : "❌"));
+            System.out.println("  Mandrel detected: " + (isMandrel() ? "✅" : "❌"));
+            System.out.println("  Native capable JVM: " + (isNativeCapableJVM() ? "✅ " + getNativeJVMType() : "❌"));
+            System.out.println("  native-image available: " + (isNativeImageAvailable() ? "✅" : "❌"));
+            System.out.println("");
+            if (!isNativeCapableJVM() || !isNativeImageAvailable()) {
+                System.out.println("This is why a local native build will fail for your request.");
+            }
+        }
+
+        System.out.println("Native JVM type seen by this process: " + getNativeJVMType());
+        System.out.println("=========================================================\n");
+    }
+
+    /**
+     * Very light check if a command name appears to be available in PATH.
+     * Used only for helpful hints (docker/podman), not hard requirements.
+     */
+    private boolean isCommandAvailable(String cmd) {
+        String path = System.getenv("PATH");
+        if (path == null) return false;
+        String exe = System.getProperty("os.name").toLowerCase().contains("windows") ? cmd + ".exe" : cmd;
+        for (String dir : path.split(java.io.File.pathSeparator)) {
+            if (new java.io.File(dir, exe).canExecute()) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Reports the effective value for a key Quarkus prop, preferring System property
+     * (which the plugin sets when configuring) and noting when this plugin forced it.
+     */
+    private String effectivePropStatus(String name) {
+        String sys = System.getProperty(name);
+        if (sys != null) {
+            boolean val = Boolean.parseBoolean(sys);
+            String note = isConfiguring() ? " (set by build-helper)" : "";
+            return (val ? "✅ true" : "❌ false") + note;
+        }
+        return propertyResolver.getPropertyStatus(name);  // fallback
     }
 
     /**
@@ -522,111 +628,8 @@ public class QuarkusBuildHelperPlugin implements Plugin<Project> {
         }
     }
 
-    /**
-     * Gets detailed information about the current JVM environment.
-     * <p>
-     * This method collects various system properties and environment information
-     * related to the JVM and returns them in a map. The map contains the following keys:
-     * <ul>
-     *   <li>"vendor" - The Java vendor (java.vendor property)</li>
-     *   <li>"runtime" - The Java runtime name (java.runtime.name property)</li>
-     *   <li>"vmName" - The Java VM name (java.vm.name property)</li>
-     *   <li>"vmVersion" - The Java VM version (java.vm.version property)</li>
-     *   <li>"javaHome" - The Java home directory (java.home property)</li>
-     *   <li>"javaVersion" - The Java version (java.version property)</li>
-     *   <li>"mandrelInPath" - Boolean indicating if "mandrel" is in the Java home path</li>
-     *   <li>"releaseContent" - Content of the release file in Java home, if available</li>
-     * </ul>
-     *
-     * @return a map containing detailed JVM information
-     */
-    public Map<String, Object> getDetailedJVMInfo() {
-        String javaHome = System.getProperty("java.home");
-        Map<String, Object> info = new HashMap<>();
-
-        info.put("vendor", System.getProperty("java.vendor"));
-        info.put("runtime", System.getProperty("java.runtime.name"));
-        info.put("vmName", System.getProperty("java.vm.name"));
-        info.put("vmVersion", System.getProperty("java.vm.version"));
-        info.put("javaHome", javaHome);
-        info.put("javaVersion", System.getProperty("java.version"));
-
-        // Check if JAVA_HOME contains mandrel in the path
-        info.put("mandrelInPath", javaHome != null && javaHome.toLowerCase().contains("mandrel"));
-
-        // Try to read the release file
-        Path releasePath = Path.of(javaHome, "release");
-        if (Files.exists(releasePath)) {
-            try {
-                String content = Files.readString(releasePath);
-                info.put("releaseContent", content);
-            } catch (Exception e) {
-                info.put("releaseContent", "Could not read release file: " + e.getMessage());
-            }
-        } else {
-            info.put("releaseContent", "No release file found");
-        }
-
-        return info;
-    }
-
-    /**
-     * Validates that the current environment meets the requirements for native image building.
-     * <p>
-     * This method checks if the current JVM is capable of native image building (GraalVM or Mandrel)
-     * and if the native-image tool is available. If either condition is not met, it throws a
-     * detailed GradleException with information about the current environment and instructions
-     * on how to set up the environment correctly.
-     *
-     * @return true if the environment is valid for native image building
-     * @throws GradleException if the environment does not meet the requirements for native image building,
-     *                        with detailed information about the current environment and how to fix it
-     */
-    public boolean validateNativeEnvironment() {
-        boolean nativeCapableJVM = isNativeCapableJVM();
-        boolean nativeImageAvailable = isNativeImageAvailable();
-
-        if (!nativeCapableJVM || !nativeImageAvailable) {
-            String jvmType = getNativeJVMType();
-            Map<String, Object> detailedInfo = getDetailedJVMInfo();
-
-            StringBuilder errorMessage = new StringBuilder();
-            errorMessage.append("\n        ❌ NATIVE BUILD REQUIREMENTS NOT MET\n");
-            errorMessage.append("\n        This project is configured for NATIVE-ONLY builds and requires:\n");
-            errorMessage.append("\n        ");
-            errorMessage.append(!nativeCapableJVM ? "❌ Native-capable JVM: Not detected" : "✅ Native-capable JVM: " + jvmType + " detected");
-            errorMessage.append("\n        ");
-            errorMessage.append(!nativeImageAvailable ? "❌ Native Image: Not available" : "✅ Native Image: Available");
-            errorMessage.append("\n");
-            errorMessage.append("\n        Current Environment:");
-            errorMessage.append("\n        - Java Vendor: ").append(detailedInfo.get("vendor"));
-            errorMessage.append("\n        - Java Runtime: ").append(detailedInfo.get("runtime"));
-            errorMessage.append("\n        - Java VM Name: ").append(detailedInfo.get("vmName"));
-            errorMessage.append("\n        - Java VM Version: ").append(detailedInfo.get("vmVersion"));
-            errorMessage.append("\n        - Java Version: ").append(detailedInfo.get("javaVersion"));
-            errorMessage.append("\n        - Java Home: ").append(detailedInfo.get("javaHome"));
-            errorMessage.append("\n        - Mandrel in Path: ").append(detailedInfo.get("mandrelInPath"));
-            errorMessage.append("\n");
-            errorMessage.append("\n        Release File Content:");
-            errorMessage.append("\n        ").append(detailedInfo.get("releaseContent"));
-            errorMessage.append("\n");
-            errorMessage.append("\n        Detection Results:");
-            errorMessage.append("\n        - isGraalVM(): ").append(isGraalVM());
-            errorMessage.append("\n        - isMandrel(): ").append(isMandrel());
-            errorMessage.append("\n        - isNativeCapableJVM(): ").append(isNativeCapableJVM());
-            errorMessage.append("\n        - isNativeImageAvailable(): ").append(isNativeImageAvailable());
-            errorMessage.append("\n");
-            errorMessage.append("\n        To fix this:");
-            errorMessage.append("\n        1. Install GraalVM from https://www.graalvm.org/downloads/");
-            errorMessage.append("\n           OR");
-            errorMessage.append("\n           Install Mandrel from https://github.com/graalvm/mandrel/releases");
-            errorMessage.append("\n        2. Set JAVA_HOME to point to GraalVM/Mandrel installation");
-            errorMessage.append("\n        3. Install native-image: gu install native-image (GraalVM) or use built-in (Mandrel)");
-            errorMessage.append("\n        4. Verify with: native-image --version");
-
-            throw new GradleException(errorMessage.toString());
-        }
-
-        return true;
-    }
+    // NOTE: Old heavy "validateNativeEnvironment" that threw GradleException has been removed.
+    // Troubleshooting is now done via the diagnostic tasks (displayQuarkusBuildOverview, displayQuarkusBuildDetail, checkNativeEnvironment)
+    // which explain exactly why the user's requested combination (e.g. native + container=false) is not working,
+    // without forcibly failing unrelated builds.
 }

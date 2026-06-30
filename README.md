@@ -1,25 +1,23 @@
 # Quarkus Build Helper Plugin
 
-A Gradle plugin that helps make it easier to configure and build native executables with Quarkus.
+A focused Gradle plugin whose only job is to let you control **two things** from the command line and then help you **troubleshoot** when they don't work:
 
-This plugin provides diagnostic tools and validation for Quarkus native builds, helping you:
+1. Build a native executable or a jar (`buildType=native|jar`)
+2. Do the native build in a container or use the machine's local GraalVM/Mandrel (`containerBuild=true|false`)
 
-- Verify that your environment is properly set up for native image building
-- Understand your current Quarkus build configuration
-- Diagnose issues with native image builds
-- Validate native executables after they're built
+It works by reading `-P` properties (the only mechanism the author found that acts early enough) and translating them into the Quarkus properties via `System.setProperty` before the Quarkus Gradle plugin evaluates the build.
 
-By default, the plugin is non-invasive and does not modify your existing Quarkus configuration. However, you can opt-in to have it enforce the build type (jar or native) via a Gradle property (see Build type configuration below).
+The diagnostic output is specifically designed to answer: *"I asked for native on my laptop (native + container=false), why isn't it working?"*
+
+By default the plugin is non-invasive. Configuration and the related troubleshooting only activate when you supply the helper properties.
 
 
-## Features
+## What it focuses on
 
-- **Environment Validation**: Automatically checks if your environment is properly set up for native image building
-- **Build Configuration Diagnostics**: Provides tasks to display your current Quarkus build configuration
-- **Native Executable Validation**: Verifies native executables after they're built
-- **Optional Build-Type Enforcement**: Opt-in property to ensure your build runs as jar or native
-- **Detailed Error Messages**: Provides detailed error messages with instructions when native build requirements aren't met
-- **Toolchain Integration**: Works with Gradle's toolchain API to find the correct Java installation
+- Forcing **native vs jar** + **container vs local Graal** from the CLI via `-P`
+- **Troubleshooting output** that explains *why* the combination you asked for isn't possible in your current environment (especially "I asked for native on the laptop but there's no Graal here").
+
+Everything else (heavy Graal detection, auto validation that throws, lots of project extensions, always-on task wiring) has been removed or made conditional so the plugin stays out of your way unless you're using the two configuration axes.
 
 ## Usage
 
@@ -31,38 +29,43 @@ plugins {
 }
 ```
 
-### Build type configuration (opt-in)
+### The two supported configuration axes (via -P)
 
-You can instruct this plugin to enforce the Quarkus build type via a Gradle property. Set one of the following on the command line:
+Use these Gradle project properties on the command line. They are read very early.
 
-- Native image build:
-  -Pquarkus-build-helper-plugin.configure.buildType=native
-
-- JAR build (uber-jar):
-  -Pquarkus-build-helper-plugin.configure.buildType=jar
-
-Effects when set:
-- buildType=native: the plugin will ensure quarkusBuild attempts to create a native image (quarkus.native.enabled=true, quarkus.package.jar.enabled=false).
-- buildType=jar: the plugin will ensure a JAR build runs as an uber-jar (quarkus.package.jar.enabled=true, quarkus.package.jar.type=uber-jar, quarkus.native.enabled=false).
-
-Examples:
 ```bash
-# Force a native image build
-./gradlew quarkusBuild -Pquarkus-build-helper-plugin.configure.buildType=native
+# 1. What to build
+-Pquarkus-build-helper-plugin.configure.buildType=native
+-Pquarkus-build-helper-plugin.configure.buildType=jar
 
-# Force a JAR (uber-jar) build
+# 2. Where to build it (only meaningful with native)
+-Pquarkus-build-helper-plugin.configure.containerBuild=true     # container
+-Pquarkus-build-helper-plugin.configure.containerBuild=false    # use this machine's Graal/Mandrel
+# You can also use the words "container" / "local" as values.
+```
+
+Common combinations:
+
+```bash
+# Native image using a container (CI friendly, no local Graal needed)
+./gradlew quarkusBuild -Pquarkus-build-helper-plugin.configure.buildType=native -Pquarkus-build-helper-plugin.configure.containerBuild=true
+
+# Native image using whatever Graal/Mandrel is on the machine (laptop dev)
+./gradlew quarkusBuild -Pquarkus-build-helper-plugin.configure.buildType=native -Pquarkus-build-helper-plugin.configure.containerBuild=false
+
+# Fast uber-jar (no native)
 ./gradlew quarkusBuild -Pquarkus-build-helper-plugin.configure.buildType=jar
 ```
 
-If the property is omitted, the plugin will not modify your Quarkus build configuration.
+When you use these, the plugin will:
 
-#### Why offer setting this property?
+* Set the corresponding `quarkus.*` system properties early enough for Quarkus to respect them.
+* Print a short confirmation at configuration time.
+* Produce focused troubleshooting output (via auto-wired tasks or by running the display* tasks) that tells you whether your environment can actually deliver what you asked for.
 
-This is the only way I could specify a build type via the ./gradlew command. I want to build a jar for dev but always a native image for prod.
+#### Why a plugin + -P properties?
 
-The above examples, seem impossible to achieve via the build command without this. You can't inject or modify these in gradle.build because it's already too late.
-
-The plugin approach works because plugins are applied early in the build cycle before it hits the error condition.
+This was the only reliable way to influence the Quarkus build type and container setting from the command line before Quarkus evaluates its configuration. Using `-D` system properties directly did not take effect early enough. The plugin is applied before the Quarkus plugin processes the build, so the forced values are visible.
 
 ### Basic configuration
 
@@ -85,46 +88,24 @@ quarkus {
 }
 ```
 
-### Available configuration options
+### Tasks (troubleshooting-oriented)
 
-| Property                           | Description                                             | Default                                                |
-|------------------------------------|---------------------------------------------------------|--------------------------------------------------------|
-| quarkus.native.enabled             | Whether to enable native image building                 | false                                                  |
-| quarkus.native.container-build     | Whether to build the native image in a container        | false                                                  |
-| quarkus.native.remote-container-build | Whether to build the native image in a remote container | false                                               |
-| quarkus.package.jar.enabled        | Whether to build a JAR file (set to false for native-only) | true                                               |
-| quarkus.native.builder-image       | The builder image to use for container builds           | quay.io/quarkus/ubi-quarkus-native-image:22.0.1-java17 |
-| quarkus.native.native-image-xmx    | The maximum heap size for the native image builder      | 4g                                                     |
-| quarkus.native.additionalBuildArgs | Additional arguments to pass to the native-image command | none                                                  |
+- `displayQuarkusBuildOverview` — What you requested + quick reality check for that exact request (e.g. "native local").
+- `displayQuarkusBuildDetail` — More data (toolchain Java home, native-image candidate path, effective properties after our forcing).
+- `checkNativeEnvironment` — Dumps the same detail + extra diagnosis when you requested local native.
+- `validateNativeExecutable` — Confirms a `-runner` binary appeared (only auto-attached for local native requests).
 
-### Tasks
+Run them explicitly any time, or they are auto-wired (overview before generate, detail before quarkusBuild) **only when** you are using the configure properties.
 
-- `displayQuarkusBuildOverview`: Displays a basic overview of the Quarkus build configuration
-- `displayQuarkusBuildDetail`: Displays detailed information about the Quarkus build configuration
-- `checkNativeEnvironment`: Validates the environment for native image building
-- `validateNativeExecutable`: Verifies the native executable after build
+Example focused workflow:
 
-### Task Examples
-
-Check if your environment is ready for native builds:
 ```bash
-./gradlew checkNativeEnvironment
-```
+./gradlew quarkusBuild \
+  -Pquarkus-build-helper-plugin.configure.buildType=native \
+  -Pquarkus-build-helper-plugin.configure.containerBuild=false
 
-Display your current Quarkus build configuration:
-```bash
+# If it fails, re-run the helper tasks for the diagnosis that explains why your local Graal request didn't work:
 ./gradlew displayQuarkusBuildDetail
-```
-
-Build a native executable and validate it:
-```bash
-./gradlew build
-# The validateNativeExecutable task will run automatically after build
-```
-
-You can also run the validation task directly:
-```bash
-./gradlew validateNativeExecutable
 ```
 
 ## Requirements

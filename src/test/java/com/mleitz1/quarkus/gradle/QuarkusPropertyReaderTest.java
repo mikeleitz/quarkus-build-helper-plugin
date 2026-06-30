@@ -9,10 +9,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Test class for Mleitz1QuarkusPropertyResolver.
+ * Test class for QuarkusPropertyReader.
  * Uses a test-specific subclass to avoid mocking the Project interface.
  */
-public class Mleitz1QuarkusPropertyResolverTest {
+public class QuarkusPropertyReaderTest {
 
     private TestablePropertyResolver resolver;
     private Map<String, Object> testProperties;
@@ -291,10 +291,10 @@ public class Mleitz1QuarkusPropertyResolverTest {
     }
 
     /**
-     * A testable subclass of Mleitz1QuarkusPropertyResolver that overrides
+     * A testable subclass of QuarkusPropertyReader that overrides
      * the methods that interact with the Project interface.
      */
-    private static class TestablePropertyResolver extends Mleitz1QuarkusPropertyResolver {
+    private static class TestablePropertyResolver extends QuarkusPropertyReader {
         private final Map<String, Object> properties;
 
         public TestablePropertyResolver(Map<String, Object> properties) {
@@ -323,9 +323,6 @@ public class Mleitz1QuarkusPropertyResolverTest {
             return value.toString();
         }
 
-        // Make protected methods public for testing
-        public String getPropertyStatus(String propertyName) {
-            return super.getPropertyStatus(propertyName);
-        }
+        // getPropertyStatus is now public on the parent
     }
 }

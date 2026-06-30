@@ -7,16 +7,16 @@ import org.gradle.api.Project;
  * This class provides methods to check the status of various Quarkus native build properties
  * and handles potential mismatches between system and Gradle property values.
  */
-public class Mleitz1QuarkusPropertyResolver {
+public class QuarkusPropertyReader {
 
     private final Project project;
 
     /**
-     * Creates a new instance of the property resolver.
+     * Creates a new instance of the property reader.
      *
      * @param project the Gradle project
      */
-    public Mleitz1QuarkusPropertyResolver(Project project) {
+    public QuarkusPropertyReader(Project project) {
         this.project = project;
     }
 
@@ -58,11 +58,9 @@ public class Mleitz1QuarkusPropertyResolver {
 
     /**
      * Gets the status of a property by checking both system and Gradle properties.
-     *
-     * @param propertyName the name of the property to check
-     * @return a status string indicating if the property is enabled, disabled, or has a mismatch
+     * Made public so the plugin and tests can use it directly for status display.
      */
-    protected String getPropertyStatus(String propertyName) {
+    public String getPropertyStatus(String propertyName) {
         Boolean systemPropertyValue = getSystemPropertyValue(propertyName);
         Boolean gradlePropertyValue = getGradlePropertyValue(propertyName);
 
@@ -163,30 +161,5 @@ public class Mleitz1QuarkusPropertyResolver {
      */
     public String getQuarkusNativeAdditionalBuildArgs() {
         return getGradlePropertyStringValue("quarkus.native.additionalBuildArgs");
-    }
-
-    /**
-     * Gets the status of a string property by checking both system and Gradle properties.
-     *
-     * @param propertyName the name of the property to check
-     * @return a status string indicating the property value or a mismatch
-     */
-    protected String getStringPropertyStatus(String propertyName) {
-        String systemPropertyValue = System.getProperty(propertyName);
-        String gradlePropertyValue = getGradlePropertyStringValue(propertyName);
-
-        if (systemPropertyValue == null || systemPropertyValue.isEmpty()) {
-            // System property is undefined, use Gradle property
-            return gradlePropertyValue != null ? gradlePropertyValue : "not set";
-        } else {
-            // System property is defined, check for mismatch
-            if (systemPropertyValue.equals(gradlePropertyValue)) {
-                return systemPropertyValue;
-            } else {
-                return String.format("⚠️ Mismatch: System=%s, Gradle=%s",
-                    systemPropertyValue,
-                    gradlePropertyValue != null ? gradlePropertyValue : "not set");
-            }
-        }
     }
 }
