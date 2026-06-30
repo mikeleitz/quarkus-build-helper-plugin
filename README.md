@@ -25,7 +25,7 @@ Everything else (heavy Graal detection, auto validation that throws, lots of pro
 
 ```gradle
 plugins {
-    id 'com.mleitz1.quarkus.quarkus-build-helper-plugin' version '0.1.5'
+    id 'com.mleitz1.quarkus.quarkus-build-helper-plugin' version '2.0.0'
 }
 ```
 
